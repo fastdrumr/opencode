@@ -26,7 +26,7 @@ import { ProviderID } from "../provider/schema"
 import { WorkspaceRouterMiddleware } from "./router"
 import { ProjectRoutes } from "./routes/project"
 import { SessionRoutes } from "./routes/session"
-// import { PtyRoutes } from "./routes/pty"
+import { PtyRoutes } from "./routes/pty"
 import { McpRoutes } from "./routes/mcp"
 import { FileRoutes } from "./routes/file"
 import { ConfigRoutes } from "./routes/config"
@@ -56,7 +56,13 @@ const csp = (hash = "") =>
 initProjectors()
 
 export namespace Server {
-  const log = Log.create({ service: "server" })
+  export type Listener = {
+    hostname: string
+    port: number
+    url: URL
+    stop: (close?: boolean) => Promise<void>
+  }
+
   const DEFAULT_CSP =
     "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; media-src 'self' data:; connect-src 'self' data:"
   const embeddedUIPromise = Flag.OPENCODE_DISABLE_EMBEDDED_WEB_UI
@@ -72,13 +78,14 @@ export namespace Server {
     return false
   }
 
+  const log = Log.create({ service: "server" })
+
   export const Default = lazy(() => create({}))
 
   export const create = (opts: { cors?: string[] }) => {
     const app = new Hono()
     const ws = createNodeWebSocket({ app })
     const route = app
-
       .onError((err, c) => {
         log.error("failed", {
           error: err,
@@ -263,7 +270,6 @@ export namespace Server {
       )
       .use(WorkspaceRouterMiddleware)
       .route("/project", ProjectRoutes())
-      // .route("/pty", PtyRoutes())
       .route("/config", ConfigRoutes())
       .route("/experimental", ExperimentalRoutes())
       .route("/session", SessionRoutes())
@@ -519,6 +525,7 @@ export namespace Server {
           return c.json(await Format.status())
         },
       )
+      .route("/pty", PtyRoutes(ws.upgradeWebSocket))
       .all("/*", async (c) => {
         const embeddedWebUI = await embeddedUIPromise
         const path = c.req.path
@@ -572,7 +579,6 @@ export namespace Server {
     return result
   }
 
-  /** @deprecated do not use this dumb shit */
   export let url: URL
 
   export async function listen(opts: {
@@ -581,7 +587,7 @@ export namespace Server {
     mdns?: boolean
     mdnsDomain?: string
     cors?: string[]
-  }) {
+  }): Promise<Listener> {
     const log = Log.create({ service: "server" })
     const built = create({
       ...opts,
@@ -624,7 +630,7 @@ export namespace Server {
       opts.hostname !== "localhost" &&
       opts.hostname !== "::1"
     if (shouldPublishMDNS) {
-      MDNS.publish(addr.port!, opts.mdnsDomain)
+      MDNS.publish(addr.port, opts.mdnsDomain)
     } else if (opts.mdns) {
       log.warn("mDNS enabled but hostname is loopback; skipping mDNS publish")
     }
